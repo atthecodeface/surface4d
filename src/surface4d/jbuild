@@ -1,0 +1,17 @@
+(jbuild_version 1)
+
+(executable (
+  (name surface4d)
+  (libraries (
+    sdl_ogl_gui
+    ogl_gui
+    mbtiles    
+    batteries
+  ))
+))
+
+(alias (
+  (name    run_top)
+  (deps    (surface4d.exe))
+  (action  (run ${<}))
+))
