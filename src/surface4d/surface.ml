@@ -33,9 +33,12 @@ struct
     (* v = k * perp + v'; hence v.perp = k*(mod2 perp); k = v.perp / (mod2 perp)
       Then v' = v -  * perp
      *)
-    let l2 = mod2 perp in
+    let l2 = sqrt (mod2 perp) in
     let k = (dot v perp) /. l2 in
-    add ~s1:(-1. *. k) v perp
+    let r = add ~s1:(-1. *. k) v perp in
+    (*let k2 = dot r perp in
+    Printf.printf "after remove dot is %g\n" k2;*)
+    r
     
   let str p =
     Array.fold_left (fun acc c -> sfmt "%s, %f" acc c) "" p
@@ -48,6 +51,7 @@ struct
   let pi4 = 4. *. pi
   let vector t u =
     let w = u *. u in
+    let w = u in
     let x = cos (t *. pi4) in
     let y = sin (t *. pi2) *. u in
     let z = cos (t *. pi2) *. u in
@@ -60,11 +64,20 @@ struct
     let dydt = wxyz.(3) in
     let dzdt = (-1.) *. wxyz.(2) in
     let dwdu = 2. *. u in
+    let dwdu = 1. in
     let dxdu = 0. in
     let dydu = sin (t *. pi2) in
     let dzdu = cos (t *. pi2) in
-    ( [| dwdt; dxdt; dydt; dzdt; |] , [| dwdu; dxdu; dydu; dzdu |] )
+    let du = [| dwdu; dxdu; dydu; dzdu |] in
+    let dt = [| dwdt; dxdt; dydt; dzdt |] in
+    let dt = Vector.remove dt du in
+    let dt = if (abs_float (Vector.dot du dt))<1E-8 then dt else (
+      Printf.printf "Hack required %f %f   %s   %s\n" t u (Vector.str dt) (Vector.str du); dt
+    ) in
+    (dt, du)
 end
+
+let str_vec = Vector.str
 
 module View =
 struct
@@ -80,12 +93,15 @@ struct
     mutable up1 : float array;
     }
 
+  let str t =
+    sfmt "%f,%f,%f : %s :   %s  %s  %s  %s" t.t t.u t.theta (str_vec t.pos) (str_vec t.fwd) (str_vec t.left) (str_vec t.up0) (str_vec t.up1)
+
   let update_fwd_left t = 
     let (dt, du) = Surface.grad t.t t.u in
     let st = sin (t.theta) in
     let ct = cos (t.theta) in
-    t.fwd  <- Vector.add ~s0:ct ~s1:st dt du;
-    t.left <- Vector.add ~s0:((-1.) *. st) ~s1:ct dt du;
+    t.fwd  <- Vector.(normalize (add ~s0:ct ~s1:st dt du));
+    t.left <- Vector.(normalize (add ~s0:((-1.) *. st) ~s1:ct dt du));
     ()
 
   let tidy_up0 t = 
@@ -101,6 +117,8 @@ struct
 
   let calc_pos t u = Surface.vector t u
 
+  let turn t dtheta = t.theta <- t.theta +. dtheta; t.moved <- true
+
   let resolve t =
     t.pos <- calc_pos t.t t.u;    
     update_fwd_left t;
@@ -111,6 +129,16 @@ struct
 
   let resolve_if_moved t =
     if t.moved then (resolve t)
+
+  let spin t dtheta = 
+    resolve_if_moved t;
+    let st = sin (dtheta) in
+    let ct = cos (dtheta) in
+    let up0 = Vector.add ~s0:ct ~s1:(-1. *. st) t.up0 t.up1 in
+    let up1 = Vector.add ~s0:ct ~s1:(1. *. st)  t.up1 t.up0 in
+    t.up0 <- up0;
+    t.up1 <- up1;
+    t.moved <- true    
 
   let v0 = [| 1.;2.;3.;4.; |]
   let v1 = [| 1.;4.;9.;16.; |]
@@ -123,7 +151,13 @@ struct
     if (Vector.tiny t.up0) then (t.up0 <- v3; resolve t);
     if (Vector.tiny t.up1) then (t.up1 <- v2; resolve t);
     if (Vector.tiny t.up1) then (t.up1 <- v3; resolve t);
+    Printf.printf "created %s" (str t);
     t
+
+  let bound t cb =
+    match cb t.t t.u with
+    | None -> ()
+    | Some (nt,nu) -> (t.t <- nt; t.u <- nu; t.moved <- true;)
 
   let move t df dl = 
     let st = sin (t.theta) in
@@ -157,6 +191,15 @@ struct
     Array.iteri (fun i v -> ba_m.{i+ 4} <- v) t.left;
     Array.iteri (fun i v -> ba_m.{i+ 8} <- v) t.up0;
     Array.iteri (fun i v -> ba_m.{i+12} <- v) t.up1;
+    ()
+
+  let ba_world_to_view_cm t ba_t ba_m = 
+    resolve_if_moved t;
+    Array.iteri (fun i v -> ba_t.{i} <- (-1.)*.v) t.pos;
+    Array.iteri (fun i v -> ba_m.{4*i+0} <- v) t.fwd;
+    Array.iteri (fun i v -> ba_m.{4*i+1} <- v) t.left;
+    Array.iteri (fun i v -> ba_m.{4*i+2} <- v) t.up0;
+    Array.iteri (fun i v -> ba_m.{4*i+3} <- v) t.up1;
     ()
 
   let ba_view_to_world t ba_t ba_m = 

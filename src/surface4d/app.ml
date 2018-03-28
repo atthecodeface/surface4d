@@ -37,7 +37,7 @@ class ogl_app_animation_server stylesheet ogl_displays: Ogl_gui.Types.t_ogl_app 
     method create_shaders =
       super#create_shaders >>= 
         fun _ -> (
-          let gl_program_desc = Ogl_gui.Program.Gl_program.make_desc "vertex_standard.glsl" "fragment_color_normal.glsl" [] ["M"; "V"; "G"; "P"; "T0"; "A"; "L_dir"; "L_col"] in
+          let gl_program_desc = Ogl_gui.Program.Gl_program.make_desc "vertex_standard_4d.glsl" "fragment_color_normal.glsl" [] ["Mm"; "Mt"; "Vm"; "Vt"; "G"; "P"; "T0"; "A"; "L_dir"; "L_col"] in
           self#add_program "vnc_vertex" gl_program_desc >>= fun _ ->
           Ok ()
         )
@@ -45,7 +45,7 @@ class ogl_app_animation_server stylesheet ogl_displays: Ogl_gui.Types.t_ogl_app 
     method create_materials =
       super#create_materials >>=
         fun _ -> (
-          self#add_material "vnc_vertex" "vnc_vertex" [|"V"; "M"; "T0"; "A"; "L_dir"; "L_col"|] >>= fun _ ->
+          self#add_material "vnc_vertex" "vnc_vertex" [|"Mm"; "Mt"; "Vm"; "Vt"; "T0"; "A"; "L_dir"; "L_col"|] >>= fun _ ->
           Ok ()
         )
 

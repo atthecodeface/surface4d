@@ -127,13 +127,13 @@ let vncs_of_surface =
   let vnc_list = ref [] in
   let indices_list = ref [] in
   let numi = 100 in
-  let numj = 3 in
+  let numj = 10 in
   for i=0 to (numi-1) do
-    let t = 0.96 *. (float i) /. (float numi) in
+    let t = (float i) /. (float numi) in
     for j=0 to (numj-1) do
-      let u = (float j) *. 0.125 +. 0.2 in
-      let pt = Surface.Surface.vector t u in
-      vnc_list := !vnc_list @ [ pt.(1); pt.(2); pt.(3); 0.;0.;1.; 1.;t;u*.10.; t;t;]
+      let u = (float j) /. (float numj) in
+      let pt = Surface.Surface.vector t (u+. 0.2) in
+      vnc_list := !vnc_list @ [ pt.(0); pt.(1); pt.(2); pt.(3); t;t;u; t;t;]
     done;
     if i>0 then (
     let new_triangles = List.init (2*numj) (fun n -> (((i-1)*numj)+n/2)+(if (n mod 2)=1 then numj else 0)) in
@@ -149,10 +149,12 @@ let vncs_of_surface =
 let vector_x_axis = Atcflib.Vector.make3 1. 0. 0.
 let vector_y_axis = Atcflib.Vector.make3 0. 1. 0.
 let vector_z_axis = Atcflib.Vector.make3 0. 0. 1.
+let ba_vec4_zero = ba_floats [|0.;0.;0.;0.;|]
 module Ordint = struct type t=int let compare a b = Pervasives.compare a b end
 module Intset=Set.Make(Ordint)
 (*c ogl_widget_animation_server  - viewer widget *)
 let blah = Ogl_gui.Stylesheet.create_desc [("activity_level" , [ ("disable",0); ("enable",1); ("hover",2); ("pressed",3);])] Ogl_gui.widget_base_styles
+let surface_bound_cb t u = (if (u<0.2) then (Some (t,0.2)) else if (u>1.2) then (Some (t,1.2)) else None)
 class ogl_widget_animation_server stylesheet name_values =
   object (self)
     inherit Ogl_gui.Widget.ogl_widget stylesheet blah "4dviewer" name_values  as super
@@ -177,6 +179,9 @@ class ogl_widget_animation_server stylesheet name_values =
   val q3 = Quaternion.make ()
   val mutable opt_material = None
   val mutable objs:Ogl_gui.Obj.ogl_obj list = []
+  val surface = Surface.View.create 0.25 0.3 0.
+  val view_t = ba_floats [|0.;0.;0.;0.;|]
+  val view_m = ba_floats [|0.;0.;0.;0.; 0.;0.;0.;0.; 0.;0.;0.;0.; 0.;0.;0.;0.; |]
 
     (*f create *)
     method create app =
@@ -201,14 +206,14 @@ class ogl_widget_animation_server stylesheet name_values =
       Printf.printf "Create geometry\n";
       if (List.length objs)=0 then (
         let surface_obj = new Ogl_gui.Obj.ogl_obj_geometry
-                            Gl.triangle_strip
+                            (if true then Gl.triangle_strip else Gl.points)
                             (Array.length (snd vncs_of_surface))
                             (snd vncs_of_surface)
-                            [ ( [(0,3,Gl.float,false,11*4,0); (1,3,Gl.float,false,11*4,3*4); (2,3,Gl.float,false,11*4,6*4); (3,2,Gl.float,false,11*4,9*4); ],
-                                ba_floats (fst vncs_of_surface) (* vertices, normals, colors, uv *)
+                            [ ( [(0,4,Gl.float,false,9*4,0); (1,3,Gl.float,false,9*4,4*4); (2,3,Gl.float,false,9*4,7*4); ],
+                                ba_floats (fst vncs_of_surface) (* vertices, colors, uv *)
                             ) ]
         in
-        self # set_objs [(surface_obj :> Ogl_gui.Obj.ogl_obj)];
+        objs <- [(surface_obj :> Ogl_gui.Obj.ogl_obj)];
       );
       List.iter (fun o -> ignore (o#create_geometry ~offset:(0.,0.,0.))) objs
 
@@ -224,33 +229,26 @@ class ogl_widget_animation_server stylesheet name_values =
 
     (*f pitch *)
     method private pitch amount = 
-      ignore (Quaternion.assign_of_rotation vector_x_axis (cos amount) (sin amount) q1);
-      ignore (Quaternion.(postmultiply q1 direction))
+      Surface.View.spin surface amount
 
     (*f yaw *)
     method private yaw amount = 
-      ignore (Quaternion.assign_of_rotation vector_y_axis (cos amount) (sin amount) q1);
-      ignore (Quaternion.(postmultiply q1 direction))
+      Surface.View.turn surface amount
 
     (*f roll *)
     method private roll amount = 
-      ignore (Quaternion.assign_of_rotation vector_z_axis (cos amount) (sin amount) q1);
-      ignore (Quaternion.(postmultiply q1 direction))
+        Surface.View.turn surface amount
 
     (*f move_forward *)
     method private move_forward scale = 
-        ignore (Matrix.assign_from_q direction rotation);
-        ignore (Matrix.scale scale rotation);
-        let z = (Matrix.row_vector rotation 2) in
-        ignore (Vector.add z center);
+        Surface.View.move surface (0.04*.scale) 0.0;
+        Surface.View.bound surface surface_bound_cb;
         ()
 
     (*f move_left *)
     method private move_left scale = 
-        ignore (Matrix.assign_from_q direction rotation);
-        ignore (Matrix.scale scale rotation);
-        let z = (Matrix.row_vector rotation 0) in
-        ignore (Vector.add z center);
+        Surface.View.move surface 0.0 (0.1*.scale);
+        Surface.View.bound surface surface_bound_cb;
         ()
 
     (*f is_key_down *)
@@ -292,37 +290,44 @@ class ogl_widget_animation_server stylesheet name_values =
       if (Option.is_none opt_material) then () else
       begin    
         let material = (Option.get opt_material) in
-        ignore (Matrix.assign_from_q direction rotation);
-        ignore (Matrix.identity translation);
-        ignore (Matrix.set 0 3 (-. (Atcflib.Vector.get center 0)) translation);
-        ignore (Matrix.set 1 3 (-. (Atcflib.Vector.get center 1)) translation);
-        ignore (Matrix.set 2 3 (-. (Atcflib.Vector.get center 2)) translation);
-        ignore (Matrix.assign_m_m rotation translation view);
-        let ar_scale = (min (super#get_content_draw_dims).(0) (super#get_content_draw_dims).(1)) *. 0.35 *. !scale in
-        ignore (Matrix.(set 1 1 ar_scale (set 0 0 ar_scale (identity tmp))));  (* Make -1/1 fit the width - but do not scale z *)
-        ignore (Matrix.assign_m_m tmp view tmp2);  (* Make -1/1 fit the width - but do not scale z *)
-        let other_uids = Ogl_gui.View.Ogl_view.set view_set (Some material) transformation in
-        Gl.uniform_matrix4fv other_uids.(0) 1 true (Ogl_gui.Utils.ba_of_matrix4 tmp2); (* 0 -> V *)
-        Gl.uniform_matrix4fv other_uids.(1) 1 true Ogl_gui.Utils.identity4; (* 1 -> M *)
 
-        light.{0} <- 0.7 *. (sin angle);
-        light.{1} <- 0.7 *. (cos angle);
+        let ar_scale = (min (super#get_content_draw_dims).(0) (super#get_content_draw_dims).(1)) *. 0.35 *. !scale in
+        ignore (Matrix.(set 1 1 ar_scale (set 0 0 ar_scale (identity view))));  (* Make -1/1 fit the width - but do not scale z *)
+
         Gl.active_texture Gl.texture0 (* + shader *);
         Gl.bind_texture   Gl.texture_2d tex_glid;
-        Gl.point_size 4.0;
-        Gl.uniform3fv other_uids.(3) 1 ambient_col;
-        Gl.uniform3fv other_uids.(4) 1 light;
-        Gl.uniform3fv other_uids.(5) 1 light_col;
-        Gl.cull_face Gl.back;
-        (*Gl.enable Gl.cull_face_enum;*)
-        Gl.uniform1i      other_uids.(2) 0 (* T0 = texture sampler 0 *);
 
-        List.iter (fun o -> o#draw view_set other_uids) objs;
+        Surface.View.ba_world_to_view_cm surface view_t view_m;
+        for i=0 to 15 do view_m.{i} <- view_m.{i} *. ar_scale; done;
+
+        let other_uids = Ogl_gui.View.Ogl_view.set view_set (Some material) transformation in
+        Gl.uniform_matrix4fv other_uids.(0) 1 true Ogl_gui.Utils.identity4;            (* 0 -> Mm *)
+        Gl.uniform4fv        other_uids.(1) 1 ba_vec4_zero;                       (* 1 -> Mt *)
+        Gl.uniform_matrix4fv other_uids.(2) 1 true view_m;                             (* 2 -> Vm *)
+        Gl.uniform4fv        other_uids.(3) 1 view_t;                             (* 3 -> Vt *)
+        Gl.uniform1i  other_uids.(4) 0 (* T0 = texture sampler 0 *);
+        Gl.uniform3fv other_uids.(5) 1 ambient_col;
+        Gl.uniform3fv other_uids.(6) 1 light;
+        Gl.uniform3fv other_uids.(7) 1 light_col;
+
+        Gl.point_size 4.0;
+        Gl.cull_face Gl.back;
+        Gl.disable Gl.cull_face_enum;
+
+        List.iter (fun o -> o # draw view_set other_uids) objs;
         Gl.bind_vertex_array 0;
       end
 
     (*f idle *)
     method idle _ = 
+      if self # is_key_down '1' then (Printf.printf "t %f u %f\n%!" surface.t surface.u);
+      if self # is_key_down '2' then (
+    Printf.printf "vt %f %f %f %f\n%!" view_t.{0} view_t.{1} view_t.{2} view_t.{3};
+      let pt = Surface.Surface.vector surface.t surface.u in
+    Printf.printf "pos %f %f %f %f\n%!" pt.(0) pt.(1) pt.(2) pt.(3) ;
+      Array.iteri (fun i v -> pt.(i) <- pt.(i) +. view_t.{i};) pt;
+    Printf.printf "pos after vt %f %f %f %f\n%!" pt.(0) pt.(1) pt.(2) pt.(3) ;
+    );
       if self # is_key_down ',' then self#move_forward ((-0.1) /. !scale);
       if self # is_key_down 'l' then self#move_forward (0.1 /. !scale);
       if self # is_key_down 'q' then self#move_left ((-0.01) /. !scale);
