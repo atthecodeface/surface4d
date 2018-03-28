@@ -5,7 +5,7 @@
   (libraries (
     sdl_ogl_gui
     ogl_gui
-    mbtiles    
+    re
     batteries
   ))
 ))

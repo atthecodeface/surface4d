@@ -142,6 +142,81 @@ let vncs_of_surface =
   done;
   (Array.of_list !vnc_list, Array.of_list !indices_list)
 
+(*a Object of man *)
+module Obj4d =
+struct
+  type t = {
+    mutable rev_vertices : (float array) list;
+    mutable rev_normals  : (float array) list;
+    mutable rev_textures : (float array) list;
+    mutable rev_lines    : (int array) list;
+    mutable rev_faces    : (int array) list;
+    mutable line_segs : int;
+    }
+  let create _ =
+  { rev_vertices=[]; rev_normals=[]; rev_textures=[]; rev_lines=[]; rev_faces=[]; line_segs=0;}
+
+  let add_vertex  t coords = 
+    let vertex = Array.create_float 4 in
+    Array.iteri (fun i v -> if i<4 then vertex.(i)<-v) coords;
+    t.rev_vertices <- vertex :: t.rev_vertices;
+    true
+    
+  let add_normal  t coords =
+    let normal = Array.create_float 4 in
+    Array.iteri (fun i v -> if i<4 then normal.(i)<-v) coords;
+    t.rev_normals <- normal :: t.rev_normals;
+    true
+   
+  let add_texture t coords =
+    let texture = Array.create_float 2 in
+    Array.iteri (fun i v -> if i<2 then texture.(i)<-v) coords;
+    t.rev_textures <- texture :: t.rev_textures;
+    true
+   
+  let add_line    t indices = 
+    t.rev_lines <- indices :: t.rev_lines;
+    t.line_segs <- t.line_segs + (Array.length indices) - 1;
+    true
+
+  let add_face    t vnc_indices = true
+
+  let build t =
+    let nc = List.length t.rev_vertices in
+    let ba_vncs = ba_float_array (nc*9) in
+    let set_vnc i v =
+      ba_vncs.{9*i+0} <- v.(0);
+      ba_vncs.{9*i+1} <- v.(1);
+      ba_vncs.{9*i+2} <- v.(2);
+      ba_vncs.{9*i+3} <- v.(3);
+      ba_vncs.{9*i+4} <- 1.;
+      ba_vncs.{9*i+5} <- 1.;
+      ba_vncs.{9*i+6} <- 1.;
+      ba_vncs.{9*i+7} <- 1.;
+      ba_vncs.{9*i+8} <- 1.;
+    in
+    List.iteri (fun i v -> set_vnc (nc-1-i) v) t.rev_vertices;
+    let line_array = Array.make (2*t.line_segs) 0 in
+    let add_line_segments acc la =
+      let lal = Array.length la in
+      for i=0 to lal-2 do
+        line_array.(2*i+acc)   <- la.(i)-1;
+        line_array.(2*i+acc+1) <- la.(i+1)-1;
+      done;
+      acc + 2*(lal-1)
+    in
+    ignore (List.fold_left add_line_segments 0 t.rev_lines);
+    (ba_vncs, line_array, 0, t.line_segs, 0)
+    
+end
+module Obj4d_reader = Obj_reader.ObjReader(Obj4d)
+let man_obj =
+  let f = open_in "man.obj" in
+  let obj = Obj4d.create () in
+  Obj4d_reader.parse_file obj f;
+  close_in f;
+  Obj4d.build obj
+
 (*a Widget viewer class *)
 (*c widget
  *)
@@ -179,6 +254,7 @@ class ogl_widget_animation_server stylesheet name_values =
   val q3 = Quaternion.make ()
   val mutable opt_material = None
   val mutable objs:Ogl_gui.Obj.ogl_obj list = []
+  val mutable static_objs:Ogl_gui.Obj.ogl_obj list = []
   val surface = Surface.View.create 0.25 0.3 0.
   val view_t = ba_floats [|0.;0.;0.;0.;|]
   val view_m = ba_floats [|0.;0.;0.;0.; 0.;0.;0.;0.; 0.;0.;0.;0.; 0.;0.;0.;0.; |]
@@ -214,12 +290,27 @@ class ogl_widget_animation_server stylesheet name_values =
                             ) ]
         in
         objs <- [(surface_obj :> Ogl_gui.Obj.ogl_obj)];
+        let (man_ba_vncs, man_indices, _, man_num_lines, _) = man_obj in
+        let man_obj = new Ogl_gui.Obj.ogl_obj_geometry
+                            (if true then Gl.lines else Gl.points)
+                            (man_num_lines*2)
+                            (man_indices)
+                            [ ( [(0,4,Gl.float,false,9*4,0); (1,3,Gl.float,false,9*4,4*4); (2,3,Gl.float,false,9*4,7*4); ],
+                                man_ba_vncs
+                            ) ]
+        in
+    Printf.printf "Creating man with %d line segments %d indices and %d point things\n" man_num_lines (Bigarray.Array1.dim man_ba_vncs) (Array.length man_indices);
+        static_objs <- [(man_obj :> Ogl_gui.Obj.ogl_obj)];
       );
-      List.iter (fun o -> ignore (o#create_geometry ~offset:(0.,0.,0.))) objs
+      List.iter (fun o -> ignore (o#create_geometry ~offset:(0.,0.,0.))) objs;
+      List.iter (fun o -> ignore (o#create_geometry ~offset:(0.,0.,0.))) static_objs;
+    ()
 
     (*f delete_geometry *)
     method delete_geometry =
-      List.iter (fun o -> ignore (o#delete_geometry)) objs
+      List.iter (fun o -> ignore (o#delete_geometry)) objs;
+      List.iter (fun o -> ignore (o#delete_geometry)) static_objs;
+      ()
 
     (*f set_objs *)
     method set_objs o = 
@@ -315,6 +406,12 @@ class ogl_widget_animation_server stylesheet name_values =
         Gl.disable Gl.cull_face_enum;
 
         List.iter (fun o -> o # draw view_set other_uids) objs;
+
+        for i=0 to 15 do view_m.{i} <- Ogl_gui.Utils.identity4.{i} *. (0.1 *. ar_scale); done;
+        Gl.uniform_matrix4fv other_uids.(2) 1 true view_m;     (* 2 -> Vm *)
+        Gl.uniform4fv        other_uids.(3) 1 ba_vec4_zero;    (* 3 -> Vt *)
+        List.iter (fun o -> o # draw view_set other_uids) static_objs;
+
         Gl.bind_vertex_array 0;
       end
 
