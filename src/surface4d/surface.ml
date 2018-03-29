@@ -44,42 +44,15 @@ struct
     Array.fold_left (fun acc c -> sfmt "%s, %f" acc c) "" p
 end
 
-module Surface =
-struct
-  let pi = 3.141592653 
-  let pi2 = 2. *. pi
-  let pi4 = 4. *. pi
-  let vector t u =
-    let w = u *. u in
-    let w = u in
-    let x = cos (t *. pi4) in
-    let y = sin (t *. pi2) *. u in
-    let z = cos (t *. pi2) *. u in
-    [| w; x; y; z; |]
-
-  let grad t u =
-    let wxyz = vector t u in
-    let dwdt = 0. in
-    let dxdt = 2. *. sin (pi4 *. t) in
-    let dydt = wxyz.(3) in
-    let dzdt = (-1.) *. wxyz.(2) in
-    let dwdu = 2. *. u in
-    let dwdu = 1. in
-    let dxdu = 0. in
-    let dydu = sin (t *. pi2) in
-    let dzdu = cos (t *. pi2) in
-    let du = [| dwdu; dxdu; dydu; dzdu |] in
-    let dt = [| dwdt; dxdt; dydt; dzdt |] in
-    let dt = Vector.remove dt du in
-    let dt = if (abs_float (Vector.dot du dt))<1E-8 then dt else (
-      Printf.printf "Hack required %f %f   %s   %s\n" t u (Vector.str dt) (Vector.str du); dt
-    ) in
-    (dt, du)
-end
-
 let str_vec = Vector.str
 
-module View =
+module type Surface_sig =
+sig
+    val vector : float -> float -> float array
+    val grad : float -> float -> (float array * float array)
+end
+
+module View(Surface:Surface_sig) =
 struct
   type t = {
     mutable t: float;
@@ -102,6 +75,7 @@ struct
     let ct = cos (t.theta) in
     t.fwd  <- Vector.(normalize (add ~s0:ct ~s1:st dt du));
     t.left <- Vector.(normalize (add ~s0:((-1.) *. st) ~s1:ct dt du));
+    t.left <- Vector.remove t.left t.fwd;
     ()
 
   let tidy_up0 t = 
@@ -212,3 +186,68 @@ struct
     ()
 
 end
+
+module Surface_mobius =
+struct
+  let pi = 3.141592653 
+  let pi2 = 2. *. pi
+  let pi4 = 4. *. pi
+  let vector t u =
+    let w = u *. u in
+    let w = u in
+    let x = cos (t *. pi4) in
+    let y = sin (t *. pi2) *. u in
+    let z = cos (t *. pi2) *. u in
+    [| w; x; y; z; |]
+
+  let grad t u =
+    let wxyz = vector t u in
+    let dwdt = 0. in
+    let dxdt = (-1.) *. pi4 *. sin (pi4 *. t) in
+    let dydt = pi2 *. ( 1.) *. cos (t *. pi2) *. u in
+    let dzdt = pi2 *. (-1.) *. sin (t *. pi2) *. u in
+    let dwdu = 2. *. u in
+    let dwdu = 1. in
+    let dxdu = 0. in
+    let dydu = sin (t *. pi2) in
+    let dzdu = cos (t *. pi2) in
+    let du = [| dwdu; dxdu; dydu; dzdu |] in
+    let dt = [| dwdt; dxdt; dydt; dzdt |] in
+    let dt = Vector.remove dt du in
+    let dt = if (abs_float (Vector.dot du dt))<1E-8 then dt else (
+      Printf.printf "Hack required %f %f   %s   %s\n" t u (Vector.str dt) (Vector.str du); dt
+    ) in
+    (dt, du)
+end
+
+module Surface_loop =
+struct
+  let pi = 3.141592653 
+  let pi2 = 2. *. pi
+  let pi4 = 4. *. pi
+
+  let vector t u =
+    let w = u in
+    let x = u in
+    let y = sin (t *. pi2) in
+    let z = cos (t *. pi2) in
+    [| w; x; y; z; |]
+
+  let grad t u =
+    let dwdt = 0. in
+    let dxdt = 0. in
+    let dydt = cos (t *. pi2) in
+    let dzdt = (-1.) *. (sin (t *. pi2)) in
+    let dwdu = 1. in
+    let dxdu = 1. in
+    let dydu = 0. in
+    let dzdu = 0. in
+    let du = [| dwdu; dxdu; dydu; dzdu |] in
+    let dt = [| dwdt; dxdt; dydt; dzdt |] in
+    let dt = Vector.remove dt du in
+    let dt = if (abs_float (Vector.dot du dt))<1E-8 then dt else (
+      Printf.printf "Hack required %f %f   %s   %s\n" t u (Vector.str dt) (Vector.str du); dt
+    ) in
+    (dt, du)
+end
+

@@ -123,6 +123,8 @@ class ogl_obj_animation =
 
 (*a Surface stuff *)
 (*f vncs_of_surface *)
+module SurfaceShape = Surface.Surface_mobius
+module SurfaceView = Surface.View(SurfaceShape)
 let vncs_of_surface =
   let vnc_list = ref [] in
   let indices_list = ref [] in
@@ -132,7 +134,7 @@ let vncs_of_surface =
     let t = (float i) /. (float numi) in
     for j=0 to (numj-1) do
       let u = (float j) /. (float numj) in
-      let pt = Surface.Surface.vector t (u+. 0.2) in
+      let pt = SurfaceShape.vector t (u+. 0.2) in
       vnc_list := !vnc_list @ [ pt.(0); pt.(1); pt.(2); pt.(3); t;t;u; t;t;]
     done;
     if i>0 then (
@@ -141,6 +143,27 @@ let vncs_of_surface =
     );
   done;
   (Array.of_list !vnc_list, Array.of_list !indices_list)
+
+let vncs_of_dust =
+  let num_pts = 10 in
+  let vncs = ba_float_array (num_pts*num_pts*num_pts*num_pts*9) in
+  for i=0 to num_pts*num_pts*num_pts*num_pts-1 do
+    let coord i = 5. *. ((float i) /. (float num_pts) -. 0.5) in
+    let w = coord (i mod num_pts) in
+    let x = coord ((i/num_pts) mod num_pts) in
+    let y = coord ((i/num_pts/num_pts) mod num_pts) in
+    let z = coord ((i/num_pts/num_pts/num_pts) mod num_pts) in
+    vncs.{9*i+0} <- w;
+    vncs.{9*i+1} <- x;
+    vncs.{9*i+2} <- y;
+    vncs.{9*i+3} <- z;
+    vncs.{9*i+4} <- 1.;
+    vncs.{9*i+5} <- 1.;
+    vncs.{9*i+6} <- 1.;
+    vncs.{9*i+7} <- 0.;
+    vncs.{9*i+8} <- 0.;
+  done;
+  vncs
 
 (*a Object of man *)
 module Obj4d =
@@ -255,7 +278,7 @@ class ogl_widget_animation_server stylesheet name_values =
   val mutable opt_material = None
   val mutable objs:Ogl_gui.Obj.ogl_obj list = []
   val mutable static_objs:Ogl_gui.Obj.ogl_obj list = []
-  val surface = Surface.View.create 0.25 0.3 0.
+  val surface = SurfaceView.create 0.25 0.3 0.
   val view_t = ba_floats [|0.;0.;0.;0.;|]
   val view_m = ba_floats [|0.;0.;0.;0.; 0.;0.;0.;0.; 0.;0.;0.;0.; 0.;0.;0.;0.; |]
 
@@ -289,7 +312,18 @@ class ogl_widget_animation_server stylesheet name_values =
                                 ba_floats (fst vncs_of_surface) (* vertices, colors, uv *)
                             ) ]
         in
-        objs <- [(surface_obj :> Ogl_gui.Obj.ogl_obj)];
+        let num_dust_pts = ((Bigarray.Array1.dim vncs_of_dust)/9) in
+        let dust_obj = new Ogl_gui.Obj.ogl_obj_geometry
+                            Gl.points
+                            num_dust_pts
+                            (Array.init num_dust_pts (fun i->i))
+                            [ ( [(0,4,Gl.float,false,9*4,0); (1,3,Gl.float,false,9*4,4*4); (2,3,Gl.float,false,9*4,7*4); ],
+                                vncs_of_dust
+                            ) ]
+        in
+        objs <- [(surface_obj :> Ogl_gui.Obj.ogl_obj);
+                 (dust_obj :> Ogl_gui.Obj.ogl_obj);
+                ];
         let (man_ba_vncs, man_indices, _, man_num_lines, _) = man_obj in
         let man_obj = new Ogl_gui.Obj.ogl_obj_geometry
                             (if true then Gl.lines else Gl.points)
@@ -318,28 +352,24 @@ class ogl_widget_animation_server stylesheet name_values =
       objs <- o;
       if (self#can_create) then self#create_geometry
 
-    (*f pitch *)
-    method private pitch amount = 
-      Surface.View.spin surface amount
+    (*f spin *)
+    method private spin amount = 
+      SurfaceView.spin surface amount
 
-    (*f yaw *)
-    method private yaw amount = 
-      Surface.View.turn surface amount
-
-    (*f roll *)
-    method private roll amount = 
-        Surface.View.turn surface amount
+    (*f turn *)
+    method private turn amount = 
+      SurfaceView.turn surface amount
 
     (*f move_forward *)
     method private move_forward scale = 
-        Surface.View.move surface (0.04*.scale) 0.0;
-        Surface.View.bound surface surface_bound_cb;
+        SurfaceView.move surface (0.04*.scale) 0.0;
+        SurfaceView.bound surface surface_bound_cb;
         ()
 
     (*f move_left *)
     method private move_left scale = 
-        Surface.View.move surface 0.0 (0.1*.scale);
-        Surface.View.bound surface surface_bound_cb;
+        SurfaceView.move surface 0.0 (0.1*.scale);
+        SurfaceView.bound surface surface_bound_cb;
         ()
 
     (*f is_key_down *)
@@ -388,7 +418,7 @@ class ogl_widget_animation_server stylesheet name_values =
         Gl.active_texture Gl.texture0 (* + shader *);
         Gl.bind_texture   Gl.texture_2d tex_glid;
 
-        Surface.View.ba_world_to_view_cm surface view_t view_m;
+        SurfaceView.ba_world_to_view surface view_t view_m;
         for i=0 to 15 do view_m.{i} <- view_m.{i} *. ar_scale; done;
 
         let other_uids = Ogl_gui.View.Ogl_view.set view_set (Some material) transformation in
@@ -420,7 +450,7 @@ class ogl_widget_animation_server stylesheet name_values =
       if self # is_key_down '1' then (Printf.printf "t %f u %f\n%!" surface.t surface.u);
       if self # is_key_down '2' then (
     Printf.printf "vt %f %f %f %f\n%!" view_t.{0} view_t.{1} view_t.{2} view_t.{3};
-      let pt = Surface.Surface.vector surface.t surface.u in
+      let pt = SurfaceShape.vector surface.t surface.u in
     Printf.printf "pos %f %f %f %f\n%!" pt.(0) pt.(1) pt.(2) pt.(3) ;
       Array.iteri (fun i v -> pt.(i) <- pt.(i) +. view_t.{i};) pt;
     Printf.printf "pos after vt %f %f %f %f\n%!" pt.(0) pt.(1) pt.(2) pt.(3) ;
@@ -429,22 +459,22 @@ class ogl_widget_animation_server stylesheet name_values =
       if self # is_key_down 'l' then self#move_forward (0.1 /. !scale);
       if self # is_key_down 'q' then self#move_left ((-0.01) /. !scale);
       if self # is_key_down 'w' then self#move_left (0.01 /. !scale);
-      if self # is_key_down '.' then self#pitch 0.005;
-      if self # is_key_down ';' then self#pitch (-0.005);
-      if self # is_key_down 'x' then self#yaw 0.005;
-      if self # is_key_down 'z' then self#yaw (-0.005);
-      if self # is_key_down 's' then self#roll 0.005;
-      if self # is_key_down 'a' then self#roll (-0.005);
+      if self # is_key_down '.' then self#spin 0.005;
+      if self # is_key_down ';' then self#spin (-0.005);
+      if self # is_key_down 'x' then self#turn 0.005;
+      if self # is_key_down 'z' then self#turn (-0.005);
+      (*if self # is_key_down 's' then self#roll 0.005;
+      if self # is_key_down 'a' then self#roll (-0.005);*)
       if self # is_key_down '\'' then scale := !scale *. 1.05;
       if self # is_key_down '/' then  scale := !scale /. 1.05;
       let v = self # joystick_axis_value 1 in
-      if (v!=0) then self # move_forward ((float (-v)) /. 32768.0 /. 120.);
+      if (v!=0) then self # move_forward ((float (-v)) /. 32768.0 /. 40.);
       let v = self # joystick_axis_value 0 in
-      if (v!=0) then self # move_left ((float (-v)) /. 32768.0 /. 120.);
+      if (v!=0) then self # turn ((float (v)) /. 32768.0 /. 40.);
       let v = self # joystick_axis_value 2 in
-      if (v!=0) then self # yaw ((float v) /. 32768.0 /. 40.);
-      let v = self # joystick_axis_value 3 in
-      if (v!=0) then self # pitch ((float v) /. 32768.0 /. 40.);
+      if (v!=0) then self # spin ((float v) /. 32768.0 /. 10.);
+      (*let v = self # joystick_axis_value 3 in
+      if (v!=0) then self # pitch ((float v) /. 32768.0 /. 40.);*)
       if self # is_key_down '=' then None
       else
         (self#request_redraw ; Some 10)
